@@ -1,0 +1,26 @@
+<plugin name="Drift Correction">
+	<base_dir>
+		drift_correction
+	</base_dir>
+	<date>
+		02/10/2016
+	</date>
+	<author>
+		Brett Settle
+	</author>
+	<description>
+		Use ROIs on illuminated pixes to correct for drift in an image stack.  A gaussian fit is applied to ROIs to locate centroids that will be aligned on a frame by frame basis.
+	</description>
+	<url>
+		https://github.com/not/yet
+	</url>
+	<dependencies>
+		<dependency name='skimage'></dependency>
+		<dependency name='leastsqbound'></dependency>
+		<dependency name='matplotlib'></dependency>
+		<dependency name='PyOpenGL'></dependency>
+	</dependencies>
+	<menu_layout>
+		<action location="drift_correct" function="drift_correction.gui">Drift Correct</action>
+	</menu_layout>
+</plugin>
