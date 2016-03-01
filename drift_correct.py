@@ -5,7 +5,45 @@ import global_vars as g
 from leastsqbound import leastsqbound
 import numpy as np
 from scipy.ndimage.interpolation import shift
+from scipy.ndimage.filters import gaussian_filter as gf
 from window import Window
+import scipy
+
+def plot_centers():
+    win = g.m.currentWindow
+    im = win.image
+    mx,my=im[0,:,:].shape
+    for roi in g.m.currentWindow.rois:
+
+        mask = roi.mask + roi.minn
+        mask=mask[(mask[:,0]>=0)*(mask[:,0]<mx)*(mask[:,1]>=0)*(mask[:,1]<my)]
+        xx=mask[:,0]; yy=mask[:,1]
+
+        centers = []
+
+        roi.center_scatter = pg.ScatterPlotItem()
+        roi.center_scatter.setParent(roi)
+        g.m.currentWindow.imageview.addItem(roi.center_scatter)
+        roi.centers = []
+        im0 = np.rollaxis(np.array([im, im, im]), 0, 4)
+        for i, frame in enumerate(im):
+            gframe = gf(frame, 1)
+            x0, y0 = np.unravel_index(frame.argmax(), frame.shape)
+            vals = fitGaussian(frame, (x0, y0, 1, 3))
+            x1, y1, a, b = vals[0]
+            im0[i, x0 + roi.minn[0], y0 + roi.minn[1], 0] = 255
+            im0[i, x1 + roi.minn[0], y1 + roi.minn[1], 1] = 255
+            #im0[i, x2 + roi.minn[0], y2 + roi.minn[1], 2] = 255
+            roi.centers.append([x0 + roi.minn[0], y0 + roi.minn[1]])
+
+    g.m.currentWindow.sigTimeChanged.connect(plotCentersAtIndex)
+    plotCentersAtIndex(g.m.currentWindow.currentIndex)
+    Window(im0)
+
+def plotCentersAtIndex(ind):
+    centers = []
+    for roi in g.m.currentWindow.rois:
+        roi.center_scatter.setData(pos=[roi.centers[ind]], size=5)
 
 class Drift_Correction(BaseProcess):
     '''drift_correction():
@@ -40,7 +78,7 @@ class Drift_Correction(BaseProcess):
             centers = np.array(roi['centers'])
             diffs[i] = -1 * np.round(centers - centers[0])
         diffs = np.mean(diffs, 0)
-        im = g.m.currentWindow.image
+        im = np.copy(g.m.currentWindow.image)
         for i, sh in enumerate(diffs):
             g.m.statusBar().showMessage("shifting frame %d of %d" % (i, len(diffs)))
             im[i] = shift(im[i], sh)
@@ -51,7 +89,7 @@ class Drift_Correction(BaseProcess):
     def plotPoints(self, i):
         if self.scatter not in g.m.currentWindow.imageview.view.addedItems:
             g.m.currentWindow.imageview.addItem(self.scatter)
-        self.scatter.setData(pos=[r['centers'][i] for r in self.rois], brush=[r['roi'].color for r in self.rois], size=1)
+        self.scatter.setData(pos=[r['centers'][i] for r in self.rois], brush=[r['roi'].color for r in self.rois], size=5)
 
     def call(self):
         self.find_centers()
@@ -76,25 +114,16 @@ class Drift_Correction(BaseProcess):
             xx=mask[:,0]; yy=mask[:,1]
 
             centers = []
-            I = im[0, xx, yy]
-            sh =  (max(xx) - min(xx) + 1, max(yy) - min(yy) + 1)
-            I = np.reshape(I,sh)
-            init_x, init_y = np.where(I==np.max(I))
-            init_x = init_x[0]
-            init_y = init_y[0]
-            for frame in range(len(im)):
-                I = im[frame, xx, yy]
-                sh =  (max(xx) - min(xx) + 1, max(yy) - min(yy) + 1)
-                I = np.reshape(I,sh)
-                vals = fitGaussian(I, [init_x, init_y, 1, 1])
-                x0, y0, a, b = vals[0]
-                init_x, init_y = [x0, y0]
+
+            for frame in im:
+                frame = gf(frame, 1)
+                x0, y0 = np.unravel_index(frame.argmax(), frame.shape)
                 centers.append([x0 + roi.minn[0], y0 + roi.minn[1]])
             self.rois.append({'roi': roi, 'centers': centers})
 
 drift_correction = Drift_Correction()
 
-def fitGaussian(I=None, p0=None, bounds=None, nGaussians=1):
+def fitGaussian(I=None, p0=None, bounds=None):
     '''
     Takes an nxm matrix and returns an nxm matrix which is the gaussian fit
     of the first.  p0 is a list of parameters [xorigin, yorigin, sigma,amplitude]
@@ -105,17 +134,11 @@ def fitGaussian(I=None, p0=None, bounds=None, nGaussians=1):
     y=np.arange(I.shape[1])
     X=[x,y]
     p0=[round(p,3) for p in p0] 
-    if nGaussians==1:
-        p, cov_x, infodic, mesg, ier = leastsqbound(err, p0,args=(I,X),bounds = bounds,ftol=.0000001,full_output=True)
-        #xorigin,yorigin,sigmax,sigmay,angle,amplitude=p
-        I_fit=gaussian(x[:,None], y[None,:],*p)
-        return p, I_fit, I_fit
-    elif nGaussians>=2:
-        p, cov_x, infodic, mesg, ier = leastsqbound(err2, p0,args=(I,X),bounds = bounds,ftol=.0000001,full_output=True)
-        #xorigin,yorigin,sigmax,sigmay,angle,amplitude=p
-        I_fit=gaussian(x[:,None], y[None,:],*(p[:4]))
-        I_fit2=gaussian2(x[:,None], y[None,:],*p)
-        return p[:4], I_fit, I_fit2
+    p, cov_x, infodic, mesg, ier = leastsqbound(err, p0,args=(I,X),bounds = bounds,ftol=.0000001,full_output=True)
+    #xorigin,yorigin,sigmax,sigmay,angle,amplitude=p
+    I_fit=gaussian(x[:,None], y[None,:],*p)
+    return p, I_fit, I_fit
+    
         
 def gaussian(x,y,xorigin,yorigin,sigma,amplitude):
     '''xorigin,yorigin,sigmax,sigmay,angle'''
@@ -134,5 +157,6 @@ def err(p, y, x):
     y is the data we are fitting to (the dependent variable)
     x is the independent variable
     '''
+    print(p)
     remander=y - gaussian_1var(p, x)
     return remander.ravel()
