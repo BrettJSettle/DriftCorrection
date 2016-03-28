@@ -89,7 +89,7 @@ class Drift_Correction(BaseProcess):
     def plotPoints(self, i):
         if self.scatter not in g.m.currentWindow.imageview.view.addedItems:
             g.m.currentWindow.imageview.addItem(self.scatter)
-        self.scatter.setData(pos=[r['centers'][i] for r in self.rois], brush=[r['roi'].color for r in self.rois], size=5)
+        self.scatter.setData(pos=[r['centers'][i] for r in self.rois], brush=[r['roi'].pen.color() for r in self.rois], size=5)
 
     def call(self):
         self.find_centers()
@@ -99,8 +99,8 @@ class Drift_Correction(BaseProcess):
         self.p2.clear()
         for r in self.rois:
             centers = np.array(r['centers'])
-            self.p1.plot(y=centers[:, 0] / np.average(centers[:, 0]), pen=QPen(r['roi'].color))
-            self.p2.plot(y=centers[:, 1] / np.average(centers[:, 1]), pen=QPen(r['roi'].color))
+            self.p1.plot(y=centers[:, 0] / np.average(centers[:, 0]), pen=r['roi'].pen)
+            self.p2.plot(y=centers[:, 1] / np.average(centers[:, 1]), pen=r['roi'].pen)
 
     def find_centers(self):
         win = g.m.currentWindow
