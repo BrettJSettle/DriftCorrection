@@ -7,14 +7,16 @@ import numpy as np
 from scipy.ndimage.interpolation import shift
 from scipy.ndimage.filters import gaussian_filter as gf
 from window import Window
+from roi import ROI_rectangle
 import scipy
 
 def plot_centers():
     win = g.m.currentWindow
     im = win.image
-    mx,my=im[0,:,:].shape
+    mx,my=win.imageDimensions()
     for roi in g.m.currentWindow.rois:
-
+        if not isinstance(roi, ROI_rectangle):
+            return
         mask = roi.mask + roi.minn
         mask=mask[(mask[:,0]>=0)*(mask[:,0]<mx)*(mask[:,1]>=0)*(mask[:,1]<my)]
         xx=mask[:,0]; yy=mask[:,1]
@@ -34,7 +36,7 @@ def plot_centers():
             im0[i, x0 + roi.minn[0], y0 + roi.minn[1], 0] = 255
             im0[i, x1 + roi.minn[0], y1 + roi.minn[1], 1] = 255
             #im0[i, x2 + roi.minn[0], y2 + roi.minn[1], 2] = 255
-            roi.centers.append([x0 + roi.minn[0], y0 + roi.minn[1]])
+            roi.centers.append([x0, y0])
 
     g.m.currentWindow.sigTimeChanged.connect(plotCentersAtIndex)
     plotCentersAtIndex(g.m.currentWindow.currentIndex)
@@ -43,11 +45,10 @@ def plot_centers():
 def plotCentersAtIndex(ind):
     centers = []
     for roi in g.m.currentWindow.rois:
-        roi.center_scatter.setData(pos=[roi.centers[ind]], size=5)
+        roi.center_scatter.setData(pos=[roi.centers[ind]], size=5, pen=roi.pen)
 
 class Drift_Correction(BaseProcess):
-    '''drift_correction():
--In Progress
+    '''Draw rectangular ROIs around tracer locations to track movement over time. Locate the center coordinates and correct the image for drift
     '''
     def __init__(self):
         super().__init__()
@@ -99,26 +100,31 @@ class Drift_Correction(BaseProcess):
         self.p2.clear()
         for r in self.rois:
             centers = np.array(r['centers'])
-            self.p1.plot(y=centers[:, 0] / np.average(centers[:, 0]), pen=r['roi'].pen)
-            self.p2.plot(y=centers[:, 1] / np.average(centers[:, 1]), pen=r['roi'].pen)
+            #self.p1.plot(y=centers[:, 0] / np.average(centers[:, 0]), pen=r['roi'].pen)
+            #self.p2.plot(y=centers[:, 1] / np.average(centers[:, 1]), pen=r['roi'].pen)
+            self.p1.plot(y=centers[:, 0], pen=r['roi'].pen)
+            self.p2.plot(y=centers[:, 1], pen=r['roi'].pen)
+
 
     def find_centers(self):
         win = g.m.currentWindow
         im = win.image
-        mx,my=im[0,:,:].shape
+        mx,my=win.imageDimensions()
         self.rois = []
         for roi in g.m.currentWindow.rois:
-            mask = roi.mask + roi.minn
+            mask = roi.mask
             mask=mask[(mask[:,0]>=0)*(mask[:,0]<mx)*(mask[:,1]>=0)*(mask[:,1]<my)]
 
             xx=mask[:,0]; yy=mask[:,1]
-
             centers = []
 
             for frame in im:
-                frame = gf(frame, 1)
-                x0, y0 = np.unravel_index(frame.argmax(), frame.shape)
-                centers.append([x0 + roi.minn[0], y0 + roi.minn[1]])
+                gframe = gf(frame, 1)
+                x0, y0 = np.unravel_index(gframe.argmax(), gframe.shape)
+                #centers.append([x0, y0])
+                vals = fitGaussian(frame, (x0, y0, 1, 3))
+                x1, y1, a, b = vals[0]
+                centers.append([x1, y1])
             self.rois.append({'roi': roi, 'centers': centers})
 
 drift_correction = Drift_Correction()
@@ -157,6 +163,5 @@ def err(p, y, x):
     y is the data we are fitting to (the dependent variable)
     x is the independent variable
     '''
-    print(p)
     remander=y - gaussian_1var(p, x)
     return remander.ravel()
