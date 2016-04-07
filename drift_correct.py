@@ -1,6 +1,7 @@
-from process.BaseProcess import BaseProcess
+from process.BaseProcess import BaseProcess, SliderLabel
 import pyqtgraph as pg
 from PyQt4.QtGui import *
+from PyQt4.QtCore import Qt
 import global_vars as g
 from leastsqbound import leastsqbound
 import numpy as np
@@ -10,42 +11,6 @@ from window import Window
 from roi import ROI_rectangle
 import scipy
 
-def plot_centers():
-    win = g.m.currentWindow
-    im = win.image
-    mx,my=win.imageDimensions()
-    for roi in g.m.currentWindow.rois:
-        if not isinstance(roi, ROI_rectangle):
-            return
-        mask = roi.mask + roi.minn
-        mask=mask[(mask[:,0]>=0)*(mask[:,0]<mx)*(mask[:,1]>=0)*(mask[:,1]<my)]
-        xx=mask[:,0]; yy=mask[:,1]
-
-        centers = []
-
-        roi.center_scatter = pg.ScatterPlotItem()
-        roi.center_scatter.setParent(roi)
-        g.m.currentWindow.imageview.addItem(roi.center_scatter)
-        roi.centers = []
-        im0 = np.rollaxis(np.array([im, im, im]), 0, 4)
-        for i, frame in enumerate(im):
-            gframe = gf(frame, 1)
-            x0, y0 = np.unravel_index(frame.argmax(), frame.shape)
-            vals = fitGaussian(frame, (x0, y0, 1, 3))
-            x1, y1, a, b = vals[0]
-            im0[i, x0 + roi.minn[0], y0 + roi.minn[1], 0] = 255
-            im0[i, x1 + roi.minn[0], y1 + roi.minn[1], 1] = 255
-            #im0[i, x2 + roi.minn[0], y2 + roi.minn[1], 2] = 255
-            roi.centers.append([x0, y0])
-
-    g.m.currentWindow.sigTimeChanged.connect(plotCentersAtIndex)
-    plotCentersAtIndex(g.m.currentWindow.currentIndex)
-    Window(im0)
-
-def plotCentersAtIndex(ind):
-    centers = []
-    for roi in g.m.currentWindow.rois:
-        roi.center_scatter.setData(pos=[roi.centers[ind]], size=5, pen=roi.pen)
 
 class Drift_Correction(BaseProcess):
     '''Draw rectangular ROIs around tracer locations to track movement over time. Locate the center coordinates and correct the image for drift
@@ -53,11 +18,12 @@ class Drift_Correction(BaseProcess):
     def __init__(self):
         super().__init__()
         findButton = QPushButton("Find Centers")
-        findButton.pressed.connect(self.call)
-        alignButton = QPushButton("Correct Drift")
-        alignButton.pressed.connect(self.correct)
+        findButton.pressed.connect(self.find_centers)
+        self.slider = SliderLabel()
+        self.slider.setRange(0, 10)
+        self.slider.valueChanged.connect(self.plotCenters)
         self.items.append({'name':'findButton','string':'Locate centroids','object':findButton})
-        self.items.append({'name':'alignButton','string':'Correct For Drift','object':alignButton})
+        self.items.append({'name':'smoothness', 'string': 'Drift Smoothness', 'object':self.slider})
 
         # Enable antialiasing for prettier plots
         pg.setConfigOptions(antialias=True)
@@ -72,13 +38,24 @@ class Drift_Correction(BaseProcess):
         self.ui.layout.insertWidget(1, self.p2)
         self.ui.resize(1000, 600)
 
-    def correct(self):
-        diffs = np.zeros((len(self.rois), np.size(self.rois[0]['centers'], 0), 2))
+    def plotCenters(self):
+        self.p1.clear()
+        self.p2.clear()
+        for r in self.rois:
+            centers = np.copy(r['centers'])
+            #self.p1.plot(y=centers[:, 0] / np.average(centers[:, 0]), pen=r['roi'].pen)
+            #self.p2.plot(y=centers[:, 1] / np.average(centers[:, 1]), pen=r['roi'].pen)
+            self.p1.plot(y=gf(centers[:, 0], self.slider.value()), pen=r['roi'].pen)
+            self.p2.plot(y=gf(centers[:, 1], self.slider.value()), pen=r['roi'].pen)
+
+    def __call__(self, keepSourceWindow=False):
+        xx, yy = [], []
+        for i in range(len(self.p1.plotItem.items)):
+            xx.append(self.p1.plotItem.items[i].getData()[1])
+            yy.append(self.p2.plotItem.items[i].getData()[1])
+        diffs = np.mean([xx, yy], 1).T
+        diffs = -1 * diffs + diffs[0]
         
-        for i, roi in enumerate(self.rois):
-            centers = np.array(roi['centers'])
-            diffs[i] = -1 * np.round(centers - centers[0])
-        diffs = np.mean(diffs, 0)
         im = np.copy(g.m.currentWindow.image)
         for i, sh in enumerate(diffs):
             g.m.statusBar().showMessage("shifting frame %d of %d" % (i, len(diffs)))
@@ -87,30 +64,12 @@ class Drift_Correction(BaseProcess):
         return Window(im)
 
 
-    def plotPoints(self, i):
-        if self.scatter not in g.m.currentWindow.imageview.view.addedItems:
-            g.m.currentWindow.imageview.addItem(self.scatter)
-        self.scatter.setData(pos=[r['centers'][i] for r in self.rois], brush=[r['roi'].pen.color() for r in self.rois], size=5)
-
-    def call(self):
-        self.find_centers()
-        g.m.currentWindow.sigTimeChanged.connect(self.plotPoints)
-
-        self.p1.clear()
-        self.p2.clear()
-        for r in self.rois:
-            centers = np.array(r['centers'])
-            #self.p1.plot(y=centers[:, 0] / np.average(centers[:, 0]), pen=r['roi'].pen)
-            #self.p2.plot(y=centers[:, 1] / np.average(centers[:, 1]), pen=r['roi'].pen)
-            self.p1.plot(y=centers[:, 0], pen=r['roi'].pen)
-            self.p2.plot(y=centers[:, 1], pen=r['roi'].pen)
-
-
     def find_centers(self):
         win = g.m.currentWindow
         im = win.image
         mx,my=win.imageDimensions()
         self.rois = []
+        g.centers = []
         for roi in g.m.currentWindow.rois:
             mask = roi.mask
             mask=mask[(mask[:,0]>=0)*(mask[:,0]<mx)*(mask[:,1]>=0)*(mask[:,1]<my)]
@@ -122,10 +81,11 @@ class Drift_Correction(BaseProcess):
                 gframe = gf(frame, 1)
                 x0, y0 = np.unravel_index(gframe.argmax(), gframe.shape)
                 #centers.append([x0, y0])
-                vals = fitGaussian(frame, (x0, y0, 1, 3))
-                x1, y1, a, b = vals[0]
-                centers.append([x1, y1])
+                #vals = fitGaussian(frame, (x0, y0, 1, 3))
+                #x1, y1, a, b = vals[0]
+                centers.append([x0, y0])
             self.rois.append({'roi': roi, 'centers': centers})
+        self.plotCenters()
 
 drift_correction = Drift_Correction()
 
@@ -133,7 +93,6 @@ def fitGaussian(I=None, p0=None, bounds=None):
     '''
     Takes an nxm matrix and returns an nxm matrix which is the gaussian fit
     of the first.  p0 is a list of parameters [xorigin, yorigin, sigma,amplitude]
-    0-19 should be [-.2889 -.3265 -.3679 -.4263 -.5016 -.6006 ... -.0228 .01913]
     '''
 
     x=np.arange(I.shape[0])
