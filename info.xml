@@ -12,7 +12,7 @@
 		Use ROIs on illuminated pixes to correct for drift in an image stack.  A gaussian fit is applied to ROIs to locate centroids that will be aligned on a frame by frame basis.
 	</description>
 	<url>
-		https://github.com/not/yet
+		https://github.com/BrettJSettle/DriftCorrection/archive/master.zip
 	</url>
 	<dependencies>
 		<dependency name='skimage'></dependency>
